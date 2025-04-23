@@ -1,50 +1,88 @@
-# Login-Authentication-with-MFA-and-Email-Notifications
+# 🔐 Secure Email-Based MFA Login System with GeoIP & Intrusion Blocking
 
-This Python project is a login authentication system that integrates multi-factor authentication (MFA) using Time-based One-Time Passwords (TOTP), device verification, and email notifications. It ensures that only approved users can log in and provides real-time alerts about login attempts.
+## 📌 Overview
+This Python project is a secure login system built with the goal of combining multi-factor authentication, email alerts, geo-location tracking, and brute-force protection into a lightweight, easy-to-use tool. It is ideal for internal environments where heightened access security is needed without the complexity of enterprise IAM tools.
 
-    Key Features:
-    User Authentication:
+---
 
-The script validates user login attempts by checking if the username exists in an approved users list.
+## 🚀 Features
 
-Each user is associated with a specific device, and the device ID must match the assigned device for the login to proceed.
+- **🔐 Multi-Factor Authentication (MFA)**
+  - One-Time Password (OTP) generated via TOTP and emailed using Gmail.
+- **📍 GeoIP Location Tracking**
+  - IP-based location fetched using `ipinfo.io` API.
+- **📧 Email Notifications**
+  - Login codes and admin alerts sent via Gmail SMTP.
+- **📊 CSV + Log File Logging**
+  - Saves login attempts in a structured CSV file and a human-readable log file.
+- **🚫 Intrusion Detection**
+  - Automatically blocks a user after 3 failed login attempts.
+- **🔒 Device Binding**
+  - Each approved user is assigned a specific device ID for added verification.
 
-    Multi-Factor Authentication (MFA):
+---
 
-MFA is implemented using TOTP, where the user is required to enter a time-sensitive one-time code sent to their email.
+## 🛠️ Technologies Used
+- `Python 3.x`
+- `smtplib`, `email.mime` – for email sending
+- `pyotp` – for generating TOTP codes
+- `requests` – for IP geolocation lookup
+- `logging` – for event logging
+- `csv`, `datetime`, `socket`, `os`
 
-If the code is correct, the user is granted access.
+---
 
-    Device Verification:
+## 📁 File Structure
+```
+📦 mfa_login_system
+ ┣ 📜 main.py                 # Main script
+ ┣ 📜 login_attempts.log      # Log file
+ ┣ 📜 login_logs.csv          # CSV log of login attempts
+ ┗ 📜 README.md               # This file
+```
 
-The script ensures that the login attempt is made from the correct device by matching the device ID with the assigned one.
+---
 
-    Email Notifications:
+## 🧪 Example Output
+### Successful Login:
+```
+✅ User: Abdirahman
+✅ Device check passed.
+✅ MFA passed: Login successful!
+📍 Location: Nairobi, Kenya (IP: 105.67.34.23)
+```
 
-Upon successful login, an email is sent to the user with login details (device, IP address, timestamp).
+### Failed Login:
+```
+❌ MFA failed: Incorrect code.
+❌ 3 failed attempts. User is now blocked.
+📧 Admin alert sent to youradminemail@gmail.com
+```
 
-Failed attempts, including incorrect MFA codes and device mismatches, are logged and an email is sent to notify about the failure.
+---
 
-    Logging:
+## 📬 Setup Instructions
+1. Set environment variable `GMAIL_APP_PASSWORD` with your Gmail App Password.
+2. Install dependencies:
+```bash
+pip install pyotp requests
+```
+3. Run the script:
+```bash
+python main.py
+```
 
-The script logs all successful and failed login attempts, including any device mismatches or unauthorized username attempts, for auditing and security monitoring.
+---
 
-    Security:
+## 📈 Future Enhancements
+- Add Slack or Telegram bot alert support
+- Implement auto-unblock timers or captcha challenge
+- Web-based interface for login tracking
+- Dashboard visualizations (Grafana, etc.)
 
-Gmail's SMTP server is used to send emails securely using TLS.
+---
 
-The Gmail password is retrieved from an environment variable, ensuring that credentials are not hardcoded in the script.
+## 👨‍💻 Author
+**Abdifatah Galgalo**  
+Cloud & Cybersecurity Engineer
 
-    Project Requirements:
-    Python 3.x
-
-Libraries: smtplib, os, logging, socket, pyotp, email.mime.text
-
-A Gmail account for sending email notifications (requires an app-specific password for authentication).
-
-Environment variables for securely storing Gmail credentials.
-
-    Usage:
-Users can enter their username, device ID, and the MFA code sent to their email for authentication.
-
-If everything checks out, the system allows the login and sends a notification email. Any failed login attempt is logged and can trigger alerts.
