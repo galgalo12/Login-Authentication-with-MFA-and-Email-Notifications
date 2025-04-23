@@ -1,15 +1,11 @@
-import smtplib
 import os
+import requests
 import logging
-import socket
+import smtplib
 import pyotp
 import csv
-import requests
 from email.mime.text import MIMEText
 from datetime import datetime
-
-# 🔧 Enable SMTP debug output
-DEBUG_SMTP = False
 
 # Configure logging
 logging.basicConfig(filename="login_attempts.log", level=logging.INFO,
@@ -17,10 +13,11 @@ logging.basicConfig(filename="login_attempts.log", level=logging.INFO,
 
 # Approved users
 approved_users = {
-    "Abdirahman": ("Mac-pro", "abdifatah143@gmail.com"),
-    "Reyes": ("Windows", "abdifatah143@gmail.com"),
-    "John": ("PC", "abdifatah143@gmail.com"),
-    "Raha": ("Mac-Air", "abdifatah143@gmail.com")
+    "Abdirahman": ("Mac-pro", "abdifatah143@gmail.com\n"),
+    "Abdifatah": ("Abdifatah-MacBook-Pro", "abdifatah143@gmail.com\n"),
+    "Reyes": ("Windows", "abdifatah143@gmail.com\n"),
+    "John": ("PC", "abdifatah143@gmail.com\n"),
+    "Raha": ("Mac-Air", "abdifatah143@gmail.com\n")
 }
 
 # Gmail credentials
@@ -43,6 +40,10 @@ failed_attempts = {}
 blocked_users = set()
 MAX_ATTEMPTS = 3
 
+# Directly insert your VirusTotal API Key here
+VIRUSTOTAL_API_KEY = "6b067aedeeb5ee65ec41d53dc04fa9b599066813c6e89b67d2c109c05a85e76c"
+VIRUSTOTAL_URL = "https://www.virustotal.com/api/v3/ip_addresses/"
+
 # Send email function
 def send_email(recipient, subject, body):
     msg = MIMEText(body)
@@ -52,8 +53,6 @@ def send_email(recipient, subject, body):
 
     try:
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            if DEBUG_SMTP:
-                server.set_debuglevel(1)
             server.starttls()
             server.login(GMAIL_SENDER, GMAIL_PASSWORD)
             server.send_message(msg)
@@ -76,6 +75,28 @@ def get_ip():
         return requests.get("https://api.ipify.org").text
     except:
         return "Unknown"
+
+# Check IP reputation with VirusTotal
+def check_ip_virustotal(ip):
+    headers = {
+        "x-apikey": VIRUSTOTAL_API_KEY
+    }
+    try:
+        response = requests.get(f"{VIRUSTOTAL_URL}{ip}", headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            if "data" in data:
+                ip_info = data["data"]
+                last_analysis = ip_info["attributes"]["last_analysis_stats"]
+                malicious_count = last_analysis.get("malicious", 0)
+                if malicious_count > 0:
+                    return f"⚠️ IP {ip} is flagged as malicious with {malicious_count} detections on VirusTotal."
+                else:
+                    return f"✅ IP {ip} is clean on VirusTotal."
+            return "❌ Unable to get VirusTotal IP info."
+        return f"❌ Error checking IP on VirusTotal: {response.status_code}"
+    except Exception as e:
+        return f"❌ VirusTotal check failed for IP {ip}: {e}"
 
 # Get location from IP
 def get_location():
@@ -106,6 +127,10 @@ def login(username, device_id, mfa_input, actual_mfa):
         logging.warning(f"BLOCKED user {username} attempted login | IP: {ip_address}")
         log_to_csv(username, device_id, ip_address, location, isp, "BLOCKED")
         return result
+
+    # Check if the IP is flagged by VirusTotal
+    ip_check = check_ip_virustotal(ip_address)
+    result += ip_check + "\n"
 
     if username in approved_users:
         assigned_device, email = approved_users[username]
@@ -162,7 +187,7 @@ User '{username}' has been blocked after {MAX_ATTEMPTS} failed login attempts.
 
 # --- MAIN ---
 if __name__ == "__main__":
-    username = input("Enter your username: ").strip()
+    username = input("Enter your username: \n").strip()
 
     if username in approved_users:
         assigned_device, user_email = approved_users[username]
