@@ -1,19 +1,21 @@
-import smtplib  # Imports the library to send emails using the Simple Mail Transfer Protocol (SMTP).
-import os  # Provides a way to interact with the operating system, such as environment variables.
-import logging  # Used for logging information or errors to a file.
-import socket  # Used to get the device's IP address.
-import pyotp  # Generates Time-based One-Time Passwords (TOTP) for Multi-Factor Authentication (MFA).
-from email.mime.text import MIMEText  # Used to create email messages in text format.
-from datetime import datetime  # Provides date and time functions.
+import smtplib
+import os
+import logging
+import socket
+import pyotp
+import csv
+import requests
+from email.mime.text import MIMEText
+from datetime import datetime
 
 # 🔧 Enable SMTP debug output
-DEBUG_SMTP = False  # A flag to enable or disable debug output when sending emails.
+DEBUG_SMTP = False
 
 # Configure logging
-logging.basicConfig(filename="login_attempts.log", level=logging.INFO,  # Set up logging to file 'login_attempts.log'.
-                    format="%(asctime)s - %(levelname)s - %(message)s")  # Define log format.
+logging.basicConfig(filename="login_attempts.log", level=logging.INFO,
+                    format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Approved users (this is a dictionary that maps usernames to their assigned device and email)
+# Approved users
 approved_users = {
     "Abdirahman": ("Mac-pro", "abdifatah143@gmail.com"),
     "Reyes": ("Windows", "abdifatah143@gmail.com"),
@@ -21,98 +23,160 @@ approved_users = {
     "Raha": ("Mac-Air", "abdifatah143@gmail.com")
 }
 
-# Gmail credentials (using environment variable for security)
-GMAIL_SENDER = "galgaloabdifatah@gmail.com"  # Sender's Gmail address.
-GMAIL_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")  # Retrieves the Gmail app password from environment variables.
+# Gmail credentials
+GMAIL_SENDER = "abdifatah143@gmail.com"
+GMAIL_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
-# Check if the Gmail password is set, if not, exit the script.
+# Admin email for alerting
+admin_email = "abdifatah143@gmail.com"  # Replace with your admin Gmail
+
 if not GMAIL_PASSWORD:
     print("❌ Environment variable 'GMAIL_APP_PASSWORD' not set.")
     exit()
 
-# MFA TOTP setup (generates a random base32 secret for MFA)
-totp_secret = pyotp.random_base32()  # Randomly generates a secret for TOTP.
-totp = pyotp.TOTP(totp_secret)  # Creates the TOTP object to generate MFA codes.
+# MFA TOTP setup
+totp_secret = pyotp.random_base32()
+totp = pyotp.TOTP(totp_secret)
 
-# Function to send an email (used to send login alerts or MFA codes)
+# Failed attempts and blocking
+failed_attempts = {}
+blocked_users = set()
+MAX_ATTEMPTS = 3
+
+# Send email function
 def send_email(recipient, subject, body):
-    msg = MIMEText(body)  # Create the email body.
-    msg["Subject"] = subject  # Set the email subject.
-    msg["From"] = GMAIL_SENDER  # Set the sender's email address.
-    msg["To"] = recipient  # Set the recipient's email address.
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = GMAIL_SENDER
+    msg["To"] = recipient
 
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:  # Connect to Gmail's SMTP server on port 587.
-            if DEBUG_SMTP:  # If debugging is enabled, show SMTP details.
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            if DEBUG_SMTP:
                 server.set_debuglevel(1)
-            server.starttls()  # Secure the connection with TLS.
-            server.login(GMAIL_SENDER, GMAIL_PASSWORD)  # Log in to Gmail using the sender's credentials.
-            server.send_message(msg)  # Send the email.
-        print(f"📧 Email sent to {recipient}")  # If successful, print confirmation.
-    except Exception as e:  # Handle any errors that occur during email sending.
+            server.starttls()
+            server.login(GMAIL_SENDER, GMAIL_PASSWORD)
+            server.send_message(msg)
+        print(f"📧 Email sent to {recipient}")
+    except Exception as e:
         print(f"❌ Failed to send email: {e}")
-        logging.error(f"Email send failed to {recipient}: {e}")  # Log the error.
+        logging.error(f"Email send failed to {recipient}: {e}")
 
-# Function to get the IP address of the device
+# Admin alert wrapper
+def alert_admin(subject, message):
+    try:
+        send_email(admin_email, subject, message)
+        print(f"📧 Admin alerted via Gmail: {admin_email}")
+    except Exception as e:
+        print(f"❌ Failed to alert admin: {e}")
+
+# Get IP address
 def get_ip():
     try:
-        return socket.gethostbyname(socket.gethostname())  # Retrieve the local device's IP address.
+        return requests.get("https://api.ipify.org").text
     except:
-        return "Unknown"  # Return "Unknown" if the IP can't be determined.
+        return "Unknown"
 
-# Login logic function
+# Get location from IP
+def get_location():
+    try:
+        ip = get_ip()
+        response = requests.get(f"https://ipinfo.io/{ip}/json").json()
+        location = response.get("city", "") + ", " + response.get("region", "")
+        isp = response.get("org", "Unknown ISP")
+        coords = response.get("loc", "")
+        return location, isp, coords
+    except:
+        return "Unknown", "Unknown", "Unknown"
+
+# CSV logger
+def log_to_csv(username, device_id, ip_address, location, isp, status):
+    with open("login_logs.csv", "a", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow([datetime.now(), username, device_id, ip_address, location, isp, status])
+
+# Main login logic
 def login(username, device_id, mfa_input, actual_mfa):
-    result = ""  # This will hold the login result message.
-    ip_address = get_ip()  # Get the device's IP address.
+    ip_address = get_ip()
+    location, isp, coords = get_location()
+    result = ""
 
-    if username in approved_users:  # Check if the username is approved.
-        assigned_device, email = approved_users[username]  # Retrieve the assigned device and email for the user.
-        result += f"The user {username} is approved.\nAssigned device: {assigned_device}\n"
+    if username in blocked_users:
+        result += f"🚫 {username} is temporarily blocked after {MAX_ATTEMPTS} failed attempts.\n"
+        logging.warning(f"BLOCKED user {username} attempted login | IP: {ip_address}")
+        log_to_csv(username, device_id, ip_address, location, isp, "BLOCKED")
+        return result
 
-        if device_id == assigned_device:  # Check if the device ID matches the assigned device.
+    if username in approved_users:
+        assigned_device, email = approved_users[username]
+        result += f"✅ User: {username}\n"
+
+        if device_id == assigned_device:
             result += "✅ Device check passed.\n"
-            if mfa_input == actual_mfa:  # Validate the MFA code.
+            if mfa_input == actual_mfa:
                 result += "🔐 MFA passed: Login successful!\n"
-                logging.info(f"SUCCESSFUL login for {username} from IP: {ip_address}, device: {device_id}")  # Log a successful login.
-                
-                # Send login notification email
-                subject = f"✅ Login Alert: {username}"
-                body = f"""
-Login successful for user: {username}
+                failed_attempts[username] = 0  # Reset on success
+                log_to_csv(username, device_id, ip_address, location, isp, "SUCCESS")
+                send_email(email, f"✅ Login Alert: {username}", f"""
+Login successful!
+User: {username}
 Device: {device_id}
-IP Address: {ip_address}
+IP: {ip_address}
+Location: {location}
+ISP: {isp}
+Coordinates: {coords}
 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-"""
-                send_email(email, subject, body)  # Send a login success email.
+""")
             else:
-                result += "❌ MFA failed: Incorrect code.\n"
-                logging.warning(f"FAILED MFA for {username} from IP: {ip_address}")  # Log MFA failure.
+                result += "❌ MFA failed.\n"
+                failed_attempts[username] = failed_attempts.get(username, 0) + 1
+                logging.warning(f"MFA FAIL for {username} | IP: {ip_address}")
         else:
-            result += f"❌ Device mismatch: Expected '{assigned_device}', got '{device_id}'\n"
-            logging.warning(f"Device mismatch for {username} - expected: {assigned_device}, entered: {device_id}")  # Log device mismatch.
+            result += f"❌ Device mismatch: expected '{assigned_device}', got '{device_id}'\n"
+            failed_attempts[username] = failed_attempts.get(username, 0) + 1
+            logging.warning(f"Device mismatch for {username} | IP: {ip_address}")
     else:
-        result += f"❌ Username '{username}' is not approved.\n"
-        logging.warning(f"Unauthorized username attempt: {username} from IP: {ip_address}")  # Log unauthorized user attempt.
+        result += f"❌ Unauthorized user: {username}\n"
+        failed_attempts[username] = failed_attempts.get(username, 0) + 1
+        logging.warning(f"Unauthorized user {username} | IP: {ip_address}")
 
-    return result  # Return the result of the login process.
+    if failed_attempts.get(username, 0) >= MAX_ATTEMPTS:
+        blocked_users.add(username)
+        result += f"🚫 {username} has been blocked after {MAX_ATTEMPTS} failed attempts.\n"
+        logging.warning(f"User {username} blocked | IP: {ip_address}")
+        log_to_csv(username, device_id, ip_address, location, isp, "BLOCKED")
+
+        alert_subject = f"🚨 BLOCKED LOGIN: {username}"
+        alert_body = f"""
+User '{username}' has been blocked after {MAX_ATTEMPTS} failed login attempts.
+
+📍 IP Address: {ip_address}
+🖥️ Device: {device_id}
+🌐 Location: {location}
+🛰️ ISP: {isp}
+🕒 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+        alert_admin(alert_subject, alert_body)
+
+    return result
 
 # --- MAIN ---
 if __name__ == "__main__":
-    username = input("Enter your username: ").strip()  # Prompt for the username.
+    username = input("Enter your username: ").strip()
 
-    if username in approved_users:  # If the user is approved, proceed with login.
-        assigned_device, user_email = approved_users[username]  # Get the assigned device and email for the user.
-        print(f"Hello {username}, your assigned device is: {assigned_device}")  # Inform the user about the device.
-        device_id = input("Enter your device ID: ").strip()  # Prompt for the device ID.
+    if username in approved_users:
+        assigned_device, user_email = approved_users[username]
+        print(f"\nHello {username}, your assigned device is: {assigned_device}\n")
+        device_id = input("Enter your device ID: ").strip()
 
         # Generate and send MFA code
-        mfa_code = totp.now()  # Generate a new MFA code using TOTP.
-        send_email(user_email, "Your MFA Code", f"Your login verification code is: {mfa_code}")  # Send the MFA code to the user's email.
+        mfa_code = totp.now()
+        send_email(user_email, "Your MFA Code", f"Your login verification code is: {mfa_code}")
 
-        # Get MFA input from the user and validate
-        mfa_input = input("Enter the MFA code sent to your email: ").strip()  # Prompt for the MFA code from the user.
-        result = login(username, device_id, mfa_input, mfa_code)  # Perform the login process and check credentials.
-        print(result)  # Print the result of the login attempt.
+        # Get code from user and validate
+        mfa_input = input("Enter the MFA code sent to your email: ").strip()
+        result = login(username, device_id, mfa_input, mfa_code)
+        print(result)
     else:
-        print(f"❌ The username '{username}' is not approved to access the system.")  # Inform the user if the username is not approved.
-        logging.warning(f"Login attempt with unknown user: {username}")  # Log the failed login attempt.
+        print(f"❌ The username '{username}' is not approved to access the system.\n")
+        logging.warning(f"Login attempt with unknown user: {username}")
